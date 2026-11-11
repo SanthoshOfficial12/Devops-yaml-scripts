@@ -1,0 +1,99 @@
+parameters:
+  - name: Pool
+    displayName: AgentPool
+    type: string
+    default: Demo-Agents
+    values:
+    - Demo-Agents
+    - Demo-Agents-2
+  - name: Deploy_to_DEV
+    type: boolean
+    default: false
+  - name: Deploy_to_QA
+    type: boolean
+    default: false
+  - name: Deploy_to_UAT
+    type: boolean
+    default: false
+  - name: Deploy_to_OPS
+    type: boolean
+    default: false
+  - name: Deploy_to_PREPROD
+    type: boolean
+    default: false
+  - name: Deploy_to_PROD
+    type: boolean
+    default: false
+  - name: QA_Package_version
+    type: string
+    default: '*'
+  - name: UAT_Package_version
+    type: string
+    default: '*'
+  - name: OPS_Package_version
+    type: string
+    default: '*'
+  - name: PREPROD_Package_version
+    type: string
+    default: '*'
+  - name: PROD_Package_version
+    type: string
+    default: '*'
+  - name: Prod_Source_Feed
+    type: string
+    default: 'UAT'
+    values:
+    - UAT
+    - OPS
+
+trigger: none
+
+stages:
+- stage: build
+  pool: Linux-Agent
+  condition: or(eq('${{ parameters.Deploy_to_DEV }}', true),and(ne(variables['Build.Reason'], 'PullRequest'),eq('${{ parameters.Deploy_to_QA }}', false),eq('${{ parameters.Deploy_to_PREPROD }}', false),eq('${{ parameters.Deploy_to_UAT }}', false),eq('${{ parameters.Deploy_to_PROD }}', false)))
+  jobs:
+  - template: templates/build.yaml
+    parameters:
+      Deploy_to_OPS: ${{ parameters.Deploy_to_OPS }}
+
+- stage: deploytoDev
+  pool: Demo-Agents
+  condition: or(eq(variables['Build.Reason'], 'Schedule'),and(eq(variables['Build.Reason'], 'Manual'),eq('${{ parameters.Deploy_to_DEV }}', true)))
+  dependsOn: build
+  jobs:
+  - job: DevDeploy
+    steps:
+    - download: none
+    
+    - task: DownloadBuildArtifacts@1
+      displayname: 'Download Build Artifacts'
+      inputs:
+        artifactName: 'Helm'
+
+    - task: Powershell@2
+      displayname: 'Deploy into DEV namespace'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $Env:KUBECONFIG="C:\Windows\Devcluster\config"
+          helm package .
+          helm upgrade --install $(repository) $(repository)-1.0.0.tgz -f values.dev.yaml -n $(devNamespace)
+
+    - task: UniversalPackages@0
+      displayname: 'Publish to Dev feed'
+      inputs:
+        command: 'publish'
+        publishDirectory: '$(System.ArtifactsDirectory)/Helm'
+        feedsToUsePublish: 'internal'
+        vstsFeedPublish: '$devFeed)'
+        vstsFeedPackagePublish: '$(vstsFeedPackagePublish)'
+        versionOption: 'major'
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: $(System.ArtifactsDirectory)
+        artifact: 'DevFiles'
+        publishLocation: 'pipeline'
+    
+  
